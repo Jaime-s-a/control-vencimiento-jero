@@ -1,126 +1,89 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
-import os
 import pickle
-import threading
+import os
+from datetime import datetime
 
-# Ruta del archivo de la base de datos
-database_file = os.path.join(os.path.expanduser("~"), "Downloads", "base_de_datos.pkl")
+# Ruta local para guardar archivo
+database_file = os.path.join(os.path.expanduser("~"), "Downloads", "base_datos.pkl")
 
-# Cargar los datos de la base de datos guardada
-def cargar_base_de_datos():
+# Funciones para guardar/cargar
+def guardar_datos(data):
+    with open(database_file, 'wb') as f:
+        pickle.dump(data, f)
+
+def cargar_datos():
     if os.path.exists(database_file):
-        try:
-            with open(database_file, "rb") as file:
-                data = pickle.load(file)
-            return data
-        except Exception as e:
-            st.error(f"Hubo un error al cargar la base de datos guardada: {e}")
+        with open(database_file, 'rb') as f:
+            return pickle.load(f)
     return None
 
-# Guardar la base de datos
-def guardar_base_de_datos(data):
+st.set_page_config(page_title="Control de Vencimiento", layout="wide")
+st.title("📦 Control de Vida Útil de Materiales")
+
+# Cargar base si existe
+if 'data' not in st.session_state:
+    st.session_state['data'] = cargar_datos()
+
+# Subida de archivo
+st.header("📤 Cargar archivo Excel")
+archivo = st.file_uploader("Selecciona tu archivo Excel (.xlsx)", type="xlsx")
+
+if archivo:
     try:
-        with open(database_file, "wb") as file:
-            pickle.dump(data, file)
-        st.info(f"Base de datos guardada correctamente en {database_file}.")
+        df = pd.read_excel(archivo, engine="openpyxl")
+        df.columns = df.columns.str.strip()
+        df['Material'] = df['Material'].astype(str).str.lower()
+        df = df.dropna(subset=['Material', 'vida util minima', 'vida util máxima'])
+        df['vida util minima'] = pd.to_numeric(df['vida util minima'], errors='coerce')
+        df['vida util máxima'] = pd.to_numeric(df['vida util máxima'], errors='coerce')
+        df = df.set_index('Material')
+        st.session_state['data'] = df
+        guardar_datos(df)
+        st.success("✅ Datos cargados y guardados.")
     except Exception as e:
-        st.error(f"Hubo un error al guardar la base de datos: {e}")
+        st.error(f"❌ Error al leer el archivo: {e}")
 
-# Cargar archivo XLSX
-def cargar_xlsx():
-    uploaded_file = st.file_uploader("Cargar archivo XLSX", type=["xlsx"])
-    if uploaded_file is not None:
-        try:
-            data = pd.read_excel(uploaded_file, engine='openpyxl')
+# Verificación de vencimiento
+st.header("🔍 Verificar vida útil del material")
+with st.form("verificar_form"):
+    material = st.text_input("🔢 Ingresar código de Material").strip().lower()
+    fecha_vencimiento = st.date_input("📅 Fecha de vencimiento")
+    submit = st.form_submit_button("Verificar")
 
-            # Limpiar nombres de las columnas
-            data.columns = data.columns.str.strip()
+if submit:
+    df = st.session_state.get('data')
+    if df is None:
+        st.warning("Primero debes cargar un archivo válido.")
+    elif material not in df.index:
+        st.error("❗ Material no encontrado.")
+    else:
+        fila = df.loc[material]
+        vida_actual = (fecha_vencimiento - datetime.today().date()).days
+        minimo = int(fila['vida util minima'])
+        maximo = int(fila['vida util máxima'])
+        cumple = "✅ Sí" if minimo <= vida_actual <= maximo else "❌ No"
 
-            # Asegurarse de que las columnas sean adecuadas
-            data['Material'] = data['Material'].astype(str).str.strip().str.lower()
-            data = data.dropna(subset=['Material', 'vida util minima', 'vida util máxima'])
-            data['vida util minima'] = pd.to_numeric(data['vida util minima'], errors='coerce')
-            data['vida util máxima'] = pd.to_numeric(data['vida util máxima'], errors='coerce')
+        resultado = pd.DataFrame([{
+            "Material": material,
+            "Descripción": fila.get("Textobrevedematerial", ""),
+            "Cliente": fila.get("Cliente", ""),
+            "Vida útil actual (días)": vida_actual,
+            "Mínimo permitido": minimo,
+            "Máximo permitido": maximo,
+            "¿Cumple?": cumple
+        }])
 
-            # Guardar base de datos
-            guardar_base_de_datos(data)
+        st.dataframe(resultado, use_container_width=True)
 
-            st.success("Datos importados correctamente.")
-            return data
-        except Exception as e:
-            st.error(f"Hubo un error al cargar los datos: {e}")
-    return None
+# Eliminar datos guardados
+st.header("🧹 Eliminar datos guardados")
+if st.button("Borrar datos locales"):
+    if os.path.exists(database_file):
+        os.remove(database_file)
+        st.session_state['data'] = None
+        st.success("Datos eliminados.")
+    else:
+        st.info("No hay datos guardados para eliminar.")
 
-# Función para verificar vencimiento
-def verificar_vencimiento(data, material_usuario, fecha_vencimiento_input):
-    if data is None:
-        st.error("Por favor, carga primero un archivo XLSX.")
-        return
 
-    material_usuario = material_usuario.strip().lower()
-
-    if not material_usuario:
-        st.error("Por favor, ingresa un material válido.")
-        return
-
-    try:
-        # Convertir la fecha de vencimiento
-        fecha_vencimiento = datetime.strptime(fecha_vencimiento_input, '%d-%m-%Y')
-
-        # Buscar el material
-        if material_usuario in data.index:
-            producto = data.loc[material_usuario]
-
-            # Extraer los valores relevantes
-            vida_util_minima = producto['vida util minima']
-            vida_util_maxima = producto['vida util máxima']
-            descripcion = producto['Textobrevedematerial']
-            cliente = producto['Cliente']
-
-            # Obtener la fecha actual (hoy)
-            fecha_actual = datetime.today()
-
-            # Calcular la vida útil actual (días)
-            vida_util_actual = (fecha_vencimiento - fecha_actual).days
-
-            # Verificar si la vida útil actual está dentro del rango
-            if vida_util_minima <= vida_util_actual <= vida_util_maxima:
-                cumple = "Sí"
-            else:
-                cumple = "No"
-
-            resultado = f"El Material {material_usuario} {descripcion} {cumple} \nCumple para ser despachado a {cliente}"
-            st.success(resultado)
-        else:
-            st.error(f"Material {material_usuario} no encontrado.")
-    except ValueError:
-        st.error("La fecha de vencimiento no tiene el formato correcto. Debe ser DD-MM-YYYY.")
-
-# Función principal para Streamlit
-def main():
-    st.title("Aplicación de Control de Vencimiento")
-
-    # Cargar los datos guardados
-    data = cargar_base_de_datos()
-
-    # Botón para cargar archivo XLSX
-    if st.button("Cargar XLSX"):
-        data = cargar_xlsx()
-
-    # Ingresar material y fecha de vencimiento
-    material_usuario = st.text_input("Material:")
-    fecha_vencimiento_input = st.text_input("Fecha de Vencimiento (DD-MM-YYYY):")
-
-    # Botón para verificar vencimiento
-    if st.button("Verificar Vencimiento"):
-        if material_usuario and fecha_vencimiento_input:
-            verificar_vencimiento(data, material_usuario, fecha_vencimiento_input)
-
-    # Botón para borrar datos
-    if st.button("Borrar Datos"):
-        st.empty()
-
-if __name__ == "__main__":
-    main()
