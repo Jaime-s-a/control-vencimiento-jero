@@ -18,7 +18,30 @@ def cargar_datos():
             return pickle.load(f)
     return None
 
-st.set_page_config(page_title="Control de Vencimiento", layout="wide")
+# Configuración para formato móvil
+st.set_page_config(page_title="Control de Vencimiento", layout="centered")
+
+# Estilo personalizado para móvil
+st.markdown("""
+    <style>
+        .main {
+            padding: 1rem !important;
+        }
+        .stButton > button {
+            width: 100%;
+        }
+        .stTextInput > div > div > input {
+            font-size: 16px;
+        }
+        .stDateInput > div > input {
+            font-size: 16px;
+        }
+        table {
+            font-size: 14px !important;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
 st.title("📦 Control de Vida Útil de Materiales")
 
 # Cargar base si existe
@@ -85,5 +108,6 @@ if st.button("Borrar datos locales"):
         st.success("Datos eliminados.")
     else:
         st.info("No hay datos guardados para eliminar.")
+
 
 
